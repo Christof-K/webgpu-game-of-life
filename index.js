@@ -16,23 +16,22 @@ context.configure({
   format: canvasFormat,
 });
 
-const GRID_SIZE = 64;
-const UPDATE_INTERVAL = 50;
+const GRID_SIZE = 256;
+const UPDATE_INTERVAL = 100;
 const WORKGROUP_SIZE = 8;
 
 let step = 0;
 
 const squareVertices = new Float32Array([
-  //   X,    Y,
   -0.8,
-  -0.8, // Triangle 1 (Blue)
+  -0.8,
   0.8,
   -0.8,
   0.8,
   0.8,
 
   -0.8,
-  -0.8, // Triangle 2 (Red)
+  -0.8,
   0.8,
   0.8,
   -0.8,
@@ -70,6 +69,13 @@ const uniformBuffer = device.createBuffer({
 device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
 // storage buffer
+const cellSizeStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+const cellSizeStateStorage = device.createBuffer({
+  label: "Cell size state",
+  size: cellSizeStateArray.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+});
+
 const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
 const cellStateStorage = [
   device.createBuffer({
@@ -86,7 +92,7 @@ const cellStateStorage = [
 
 // Mark every third cell of the first grid as active.
 for (let i = 0; i < cellStateArray.length; ++i) {
-  cellStateArray[i] = Math.random() > 0.6 ? 1 : 0;
+  cellStateArray[i] = Math.random() > 0.94 ? 1 : 0;
 }
 device.queue.writeBuffer(cellStateStorage[0], 0, cellStateArray);
 // Mark every other cell of the second grid as active.
@@ -94,6 +100,11 @@ for (let i = 0; i < cellStateArray.length; i++) {
   cellStateArray[i] = i % 2;
 }
 device.queue.writeBuffer(cellStateStorage[1], 0, cellStateArray);
+
+for (let i = 0; i < cellSizeStateArray.length; i++) {
+  cellSizeStateArray[i] = 1;
+}
+device.queue.writeBuffer(cellSizeStateStorage, 0, cellSizeStateArray)
 
 const cellShader = `
     struct VertexInput {
@@ -104,10 +115,12 @@ const cellShader = `
     struct VertexOutput {
       @builtin(position) pos: vec4f,
       @location(0) cell: vec2f,
+      @location(1) @interpolate(flat) instance: u32
     }
 
     @group(0) @binding(0) var<uniform> grid: vec2f;
     @group(0) @binding(1) var<storage> cellState: array<u32>;
+    @group(0) @binding(3) var<storage, read_write> cellSizeState: array<u32>;
 
     @vertex
     fn vertexMain(input: VertexInput) -> VertexOutput {
@@ -121,14 +134,30 @@ const cellShader = `
       var output: VertexOutput;
       output.pos = vec4f(gridPos, 0, 1);
       output.cell = cell;
+      output.instance = input.instance;
 
       return output;
     }
 
     @fragment
     fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-      let c = input.cell / grid;
-      return vec4f(c, 1-c.x, 1);
+
+      let size = f32(cellSizeState[input.instance]);
+
+      var red = size/10;
+      var green = size/10;
+      var blue = size/10;
+
+      if(size > 4.0) {
+        green = green * 10;
+      } else if(size > 2.0) {
+        red = red * 4;
+      } else {
+        blue = blue * 10;
+      }
+
+      let color = vec4f(red, green, blue, 1);
+      return color;
     }
 `;
 
@@ -137,14 +166,13 @@ const cellShaderModule = device.createShaderModule({
   code: cellShader,
 });
 
-// Create the compute shader that will process the simulation.
-const simulationShaderModule = device.createShaderModule({
-  label: "Game of Life simulation shader",
-  code: `
-    @group(0) @binding(0) var<uniform> grid: vec2f;
+
+const simulationShader = `
+   @group(0) @binding(0) var<uniform> grid: vec2f;
 
     @group(0) @binding(1) var<storage> cellStateIn: array<u32>;
     @group(0) @binding(2) var<storage, read_write> cellStateOut: array<u32>;
+    @group(0) @binding(3) var<storage, read_write> cellSizeState: array<u32>;
 
     fn cellIndex(cell: vec2u) -> u32 {
       return (cell.y % u32(grid.y)) * u32(grid.x) +
@@ -169,12 +197,14 @@ const simulationShaderModule = device.createShaderModule({
 
       let i = cellIndex(cell.xy);
 
+      cellSizeState[i] = activeNeighbors;
+
       // Conway's game of life rules:
       switch activeNeighbors {
-        case 2: {
+        case 1,2: {
           cellStateOut[i] = cellStateIn[i];
         }
-        case 3: {
+        case 3,5,10: {
           cellStateOut[i] = 1;
         }
         default: {
@@ -182,7 +212,12 @@ const simulationShaderModule = device.createShaderModule({
         }
       }
     }
-  `,
+`;
+
+// Create the compute shader that will process the simulation.
+const simulationShaderModule = device.createShaderModule({
+  label: "Game of Life simulation shader",
+  code: simulationShader
 });
 
 
@@ -206,6 +241,11 @@ const bindGroupLayout = device.createBindGroupLayout({
     {
       binding: 2,
       visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: "storage" },
+    },
+    {
+      binding: 3,
+      visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT,
       buffer: { type: "storage" },
     },
   ],
@@ -263,6 +303,10 @@ const bindGroups = [
         binding: 2,
         resource: { buffer: cellStateStorage[1] },
       },
+      {
+        binding: 3,
+        resource: { buffer: cellSizeStateStorage },
+      },
     ],
   }),
   device.createBindGroup({
@@ -280,6 +324,10 @@ const bindGroups = [
       {
         binding: 2,
         resource: { buffer: cellStateStorage[0] },
+      },
+      {
+        binding: 3,
+        resource: { buffer: cellSizeStateStorage },
       },
     ],
   }),
