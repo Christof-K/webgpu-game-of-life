@@ -4,4 +4,6 @@ built: `npm run built`
 
 serve `npm run serve`
 
-![demo](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExZzNpY29kdnk5MmExZjh3MXR1b3puZjIwempyOWs4eDUzaGtlZXZvMyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/XVS9kuRkMYCqmLCPdr/giphy.gif)
+
+https://github.com/Christof-K/webgpu-game-of-life/assets/86555846/9abba451-4715-438c-9e93-68b5022fe6ce
+
