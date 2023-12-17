@@ -1,4 +1,2 @@
 /node_modules
-.hintrc
-/dist
-.babelrc
+*.js
